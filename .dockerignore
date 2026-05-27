@@ -1,0 +1,10 @@
+.env
+.git
+.github
+node_modules
+session*.json
+state.json
+*.log
+README.md
+start-watcher.ps1
+compose.yml

@@ -1,0 +1,15 @@
+services:
+  watcher:
+    image: ghcr.io/jul-fls/arkea-arena-watcher:latest
+    container_name: arkea-arena-watcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - watcher-data:/data
+    environment:
+      STATE_FILE: /data/state.json
+      SESSION_FILE: /data/session.json
+
+volumes:
+  watcher-data:

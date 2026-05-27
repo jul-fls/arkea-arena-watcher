@@ -1,0 +1,14 @@
+{
+  "name": "arkea-arena-watcher",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node watcher.js",
+    "check": "node --check watcher.js",
+    "docker:build": "docker build -t arkea-arena-watcher ."
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
