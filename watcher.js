@@ -59,18 +59,28 @@ async function main() {
     try {
       const current = await fetchAvailabilitySnapshot(client);
       const previous = readJson(CONFIG.stateFile);
-      const changes = previous ? compareSnapshots(previous, current) : [];
+      const previousMatchesEvent =
+        previous && getEventFingerprint(previous.event) === getEventFingerprint(current.event);
+      if (previous && !previousMatchesEvent) {
+        console.log(
+          `[watcher] Event changed (${getEventFingerprint(previous.event)} -> ${getEventFingerprint(
+            current.event
+          )}); resetting saved availability baseline.`
+        );
+      }
+      const baseline = previousMatchesEvent ? previous : null;
+      const changes = baseline ? compareSnapshots(baseline, current) : [];
 
-      if (!previous && CONFIG.notifyOnStart) {
+      if (!baseline && CONFIG.notifyOnStart) {
         await sendDiscordMessage(formatStartupMessage(current));
-      } else if (previous && changes.length > 0) {
-        await sendDiscordMessage(formatChangeMessage(previous, current, changes));
+      } else if (baseline && changes.length > 0) {
+        await sendDiscordMessage(formatChangeMessage(baseline, current, changes));
       }
 
       writeJson(CONFIG.stateFile, current);
       client.saveSession(CONFIG.sessionFile);
 
-      const delta = previous ? current.totalAvailable - previous.totalAvailable : 0;
+      const delta = baseline ? current.totalAvailable - baseline.totalAvailable : 0;
       const sign = delta > 0 ? "+" : "";
       console.log(
         `[${startedAt.toISOString()}] ${formatConsoleSummary(current)} (${sign}${delta})`
@@ -324,6 +334,7 @@ async function fetchAvailabilitySnapshot(client) {
   return {
     checkedAt: new Date().toISOString(),
     event,
+    eventFingerprint: getEventFingerprint(event),
     totalAvailable: sum(snapshotCategories.map((category) => category.total)),
     categories: snapshotCategories,
   };
@@ -803,6 +814,15 @@ function normalize(value) {
 
 function getEventName(snapshot) {
   return cleanText(snapshot.event?.name || CONFIG.event?.name || "Arkea Arena event");
+}
+
+function getEventFingerprint(event = {}) {
+  if (event.idmanif && event.idseance) {
+    return `${event.idmanif}:${event.idseance}`;
+  }
+  if (event.ticketUrl) return event.ticketUrl;
+  if (event.presentationUrl) return event.presentationUrl;
+  return "unknown-event";
 }
 
 function cleanText(value) {

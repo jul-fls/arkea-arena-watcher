@@ -105,3 +105,5 @@ On each poll it stores totals per category and per zone in `state.json`. Discord
 - total watched availability
 - category totals for Catégorie 1, Catégorie 2, and Fosse
 - zone-level drops, when the backend exposes zones for that category
+
+When `PRESENTATION_URL` or `WATCH_URL` points to a different event, the watcher detects the changed event fingerprint and resets the saved availability baseline automatically. The next poll becomes the new baseline instead of comparing the new concert with the old one.
