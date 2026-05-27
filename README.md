@@ -59,6 +59,13 @@ docker compose up -d
 docker compose down
 ```
 
+If an older deployment created the volume with the wrong ownership and logs show `EACCES: permission denied, open '/data/state.json'`, recreate the volume once:
+
+```powershell
+docker compose down -v
+docker compose up -d
+```
+
 ## Configuration
 
 - `DISCORD_WEBHOOK_URL`: required Discord webhook URL.
