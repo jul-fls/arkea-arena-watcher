@@ -19,6 +19,7 @@ const CONFIG = {
   sessionFile: path.resolve(WORKDIR, process.env.SESSION_FILE || "session.json"),
   watchedCategories: parseWatchedCategories(process.env.WATCH_CATEGORIES),
   recaptchaSiteKey: process.env.RECAPTCHA_SITE_KEY || "",
+  discordDryRun: truthy(process.env.DISCORD_DRY_RUN),
   notifyOnStart: truthy(process.env.DISCORD_NOTIFY_ON_START),
   runOnce: truthy(process.env.RUN_ONCE),
   event: null,
@@ -174,7 +175,9 @@ class TicketClient {
     });
 
     if (!finalPage.ok) {
-      throw new Error(`session bootstrap failed: final page returned ${finalPage.status}`);
+      console.warn(
+        `[watcher] Session bootstrap final page returned ${finalPage.status}; trying ticket API anyway.`
+      );
     }
   }
 
@@ -682,6 +685,11 @@ function formatStartupMessage(current) {
 }
 
 async function sendDiscordMessage(content) {
+  if (CONFIG.discordDryRun) {
+    console.log(`[watcher] DISCORD_DRY_RUN=1; would send Discord message:\n${content}`);
+    return;
+  }
+
   const response = await fetch(CONFIG.webhookUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },

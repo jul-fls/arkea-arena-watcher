@@ -76,6 +76,7 @@ docker compose up -d
 - `POLL_SECONDS`: polling interval, default `180`.
 - `WATCH_CATEGORIES`: comma-separated categories to watch, default `01,02,FO`.
 - `DISCORD_NOTIFY_ON_START`: set to `1` to send a startup message.
+- `DISCORD_DRY_RUN`: set to `1` to log Discord messages without sending them.
 - `SESSION_FILE`: cookie/session cache, default `session.json`.
 - `RUN_ONCE`: set to `1` for a single poll smoke test.
 
