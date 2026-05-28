@@ -73,10 +73,13 @@ docker compose up -d
 - `WATCH_URL`: optional direct ticketing URL override.
 - `API_URL`: optional direct tariff API URL override.
 - `RECAPTCHA_SITE_KEY`: optional override; normally discovered from the ticketing EPS asset at runtime.
+- `USER_AGENT`, `SEC_CH_UA`, `SEC_CH_UA_PLATFORM`: optional browser identity header overrides.
 - `POLL_SECONDS`: polling interval, default `180`.
+- `BLOCK_COOLDOWN_MINUTES`: pause duration after an anti-bot block, default `180`.
 - `WATCH_CATEGORIES`: comma-separated categories to watch, default `01,02,FO`.
 - `DISCORD_NOTIFY_ON_START`: set to `1` to send a startup message.
 - `DISCORD_DRY_RUN`: set to `1` to log Discord messages without sending them.
+- `DEBUG_BOOTSTRAP`: set to `1` to log anti-bot bootstrap status and cookie presence.
 - `SESSION_FILE`: cookie/session cache, default `session.json`.
 - `RUN_ONCE`: set to `1` for a single poll smoke test.
 

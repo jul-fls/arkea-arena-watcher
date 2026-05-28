@@ -3,7 +3,7 @@ const path = require("path");
 
 const WORKDIR = __dirname;
 const RECAPTCHA_ACTION = "FREvent";
-const USER_AGENT =
+const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0";
 
@@ -15,16 +15,24 @@ const CONFIG = {
   apiUrl: process.env.API_URL || "",
   webhookUrl: process.env.DISCORD_WEBHOOK_URL,
   intervalMs: numberEnv("POLL_SECONDS", 180) * 1000,
+  blockCooldownMs: numberEnv("BLOCK_COOLDOWN_MINUTES", 180) * 60 * 1000,
   stateFile: path.resolve(WORKDIR, process.env.STATE_FILE || "state.json"),
   sessionFile: path.resolve(WORKDIR, process.env.SESSION_FILE || "session.json"),
   watchedCategories: parseWatchedCategories(process.env.WATCH_CATEGORIES),
   recaptchaSiteKey: process.env.RECAPTCHA_SITE_KEY || "",
+  userAgent: process.env.USER_AGENT || DEFAULT_USER_AGENT,
+  secChUa:
+    process.env.SEC_CH_UA ||
+    '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+  secChUaPlatform: process.env.SEC_CH_UA_PLATFORM || '"Windows"',
+  debugBootstrap: truthy(process.env.DEBUG_BOOTSTRAP),
   discordDryRun: truthy(process.env.DISCORD_DRY_RUN),
   notifyOnStart: truthy(process.env.DISCORD_NOTIFY_ON_START),
   runOnce: truthy(process.env.RUN_ONCE),
   event: null,
   ticket: null,
 };
+const USER_AGENT = CONFIG.userAgent;
 
 async function main() {
   if (truthy(process.env.SELF_TEST)) {
@@ -57,6 +65,7 @@ async function main() {
 
   while (true) {
     const startedAt = new Date();
+    let nextPollMs = CONFIG.intervalMs;
     try {
       const current = await fetchAvailabilitySnapshot(client);
       const previous = readJson(CONFIG.stateFile);
@@ -88,10 +97,18 @@ async function main() {
       );
     } catch (error) {
       console.error(`[${startedAt.toISOString()}] poll failed: ${error.message}`);
+      if (error instanceof TicketingBlockError) {
+        nextPollMs = CONFIG.blockCooldownMs;
+        console.error(
+          `[watcher] Ticketing site returned an anti-bot block. Cooling down for ${Math.round(
+            nextPollMs / 60000
+          )} minutes.`
+        );
+      }
     }
 
     if (CONFIG.runOnce) break;
-    await sleep(CONFIG.intervalMs);
+    await sleep(nextPollMs);
   }
 }
 
@@ -125,14 +142,20 @@ class TicketClient {
     });
 
     if (response.status === 403 || response.status === 401) {
+      debugLog(`ticket API pre-bootstrap returned ${response.status}`);
       await this.bootstrapSession();
+      debugLog(`cookies after bootstrap: ${this.cookieSummary()}`);
       response = await this.request(this.apiUrl, {
         headers: apiHeaders(this.pageUrl),
       });
+      debugLog(`ticket API post-bootstrap returned ${response.status}`);
     }
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+      if (isTicketingBlock(response.status, body)) {
+        throw new TicketingBlockError(response.status, body);
+      }
       throw new Error(`ticket API failed: ${response.status} ${body.slice(0, 200)}`);
     }
 
@@ -140,28 +163,39 @@ class TicketClient {
   }
 
   async bootstrapSession() {
-    await this.request(this.pageUrl, {
+    const firstPage = await this.request(this.pageUrl, {
       headers: pageHeaders(),
     });
+    debugLog(`initial page returned ${firstPage.status}; cookies: ${this.cookieSummary()}`);
 
     const epsManager = await this.requestText(`${this.origin}/eps-mgr`, {
       headers: {
         accept: "*/*",
         referer: this.pageUrl,
+        "sec-fetch-dest": "script",
+        "sec-fetch-mode": "no-cors",
+        "sec-fetch-site": "same-origin",
       },
     });
+    debugLog(`eps-mgr loaded; cookies: ${this.cookieSummary()}`);
 
     if (!this.recaptchaSiteKey) {
       this.recaptchaSiteKey = await discoverRecaptchaSiteKey(this.origin, epsManager);
     }
+    debugLog(`recaptcha site key: ${this.recaptchaSiteKey.slice(0, 8)}...`);
 
     const token = await getRecaptchaToken(this.origin, this.recaptchaSiteKey);
-    await this.request(`${this.origin}/epsf/gec/v3/${RECAPTCHA_ACTION}`, {
+    debugLog(`recaptcha token length: ${token.length}`);
+    const gecResponse = await this.request(`${this.origin}/epsf/gec/v3/${RECAPTCHA_ACTION}`, {
       method: "POST",
       headers: {
         accept: "*/*",
         "content-type": "application/json",
+        origin: this.origin,
         referer: this.pageUrl,
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
       },
       body: JSON.stringify({
         hostname: this.host,
@@ -169,6 +203,7 @@ class TicketClient {
         token,
       }),
     });
+    debugLog(`gec returned ${gecResponse.status}; cookies: ${this.cookieSummary()}`);
 
     const finalPage = await this.request(this.pageUrl, {
       headers: pageHeaders(),
@@ -179,6 +214,7 @@ class TicketClient {
         `[watcher] Session bootstrap final page returned ${finalPage.status}; trying ticket API anyway.`
       );
     }
+    debugLog(`final page returned ${finalPage.status}; cookies: ${this.cookieSummary()}`);
   }
 
   async request(url, options = {}) {
@@ -223,6 +259,25 @@ class TicketClient {
       .map(([name, value]) => `${name}=${value}`)
       .join("; ");
   }
+
+  cookieSummary() {
+    const names = ["eps_sid", "tmpt", "SID", "BID", "tkm_i18n"];
+    return names
+      .map((name) => `${name}=${this.cookies[name] ? "yes" : "no"}`)
+      .join(", ");
+  }
+}
+
+class TicketingBlockError extends Error {
+  constructor(status, body) {
+    super(`ticket API anti-bot block: ${status} ${String(body).slice(0, 200)}`);
+    this.name = "TicketingBlockError";
+    this.status = status;
+  }
+}
+
+function isTicketingBlock(status, body) {
+  return status === 403 && /"response"\s*:\s*"block"|robot|suspendue/i.test(String(body));
 }
 
 async function discoverRecaptchaSiteKey(origin, epsManagerScript) {
@@ -710,15 +765,24 @@ function apiHeaders(referer) {
     accept: "application/json, text/plain, */*",
     "content-type": "application/json",
     referer,
-    "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+    "sec-ch-ua": CONFIG.secChUa,
     "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
+    "sec-ch-ua-platform": CONFIG.secChUaPlatform,
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
   };
 }
 
 function pageHeaders() {
   return {
     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "cache-control": "no-cache",
+    pragma: "no-cache",
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "none",
+    "upgrade-insecure-requests": "1",
   };
 }
 
@@ -844,6 +908,12 @@ function compactObject(object) {
   return Object.fromEntries(
     Object.entries(object).filter(([, value]) => value !== "" && value !== null && value !== undefined)
   );
+}
+
+function debugLog(message) {
+  if (CONFIG.debugBootstrap) {
+    console.log(`[watcher:debug] ${message}`);
+  }
 }
 
 function truthy(value) {
